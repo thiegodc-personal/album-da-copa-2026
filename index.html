@@ -5439,6 +5439,17 @@ function applyImport(data, strategy, adoptName) {
   sanitizeStateAgainstSchema();
   pruneRedundantTeamOrder();
   state.marksSinceBackup = 0;
+  // Como o estado veio de um backup, registra que JÁ existe um backup recente —
+  // evita o aviso "nunca fez backup" logo após importar.
+  // No OVERWRITE o estado é idêntico ao arquivo (backup real). No MERGE também
+  // consideramos coberto, já que o usuário acabou de partir de um backup conhecido.
+  if (strategy === "overwrite" && data.exportedAt) {
+    // usa a data original do arquivo importado
+    state.lastBackupAt = data.exportedAt;
+  } else {
+    state.lastBackupAt = new Date().toISOString();
+  }
+  state.lastBackupCount = Object.keys(state.collected).length;
   saveState();
   renderCollectorChip();
   render();

@@ -1,0 +1,12 @@
+# Backups temporários de recuperação (não versionar)
+index.recover-*.html
+*.recover.html
+
+# Credenciais (nunca commitar)
+.credentials/
+*credentials*.json
+github_*.json
+
+# Sistema
+Thumbs.db
+.DS_Store
