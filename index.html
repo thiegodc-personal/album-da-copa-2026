@@ -2264,6 +2264,7 @@
 <!-- Modal de SINCRONIZAÇÃO ONLINE (opcional): criar conta / entrar / só local -->
 <div class="modal-backdrop" id="syncModal" style="display:none">
   <div class="modal">
+    <button class="modal-close" id="syncCloseBtn" aria-label="Fechar" title="Fechar (continuar só neste aparelho)">×</button>
     <!-- Tela 1: escolha -->
     <div id="syncStepChoice">
       <h2>Sincronizar entre aparelhos</h2>
@@ -6160,6 +6161,13 @@ function openSyncModal(step = "choice") {
   showSyncStep(step);
 }
 function closeSyncModal() { document.getElementById("syncModal").style.display = "none"; }
+// Fechar o modal de sync = "continuar só neste aparelho" (conta é opcional).
+// Se for o primeiro acesso (sem nome de colecionador), oferece o modal de nome.
+// Pode reabrir a qualquer momento clicando no badge de status do header.
+function dismissSyncModal() {
+  closeSyncModal();
+  if (!syncLayer.isEnabled() && !state.collectorName) openNameModal(true);
+}
 function showSyncStep(step) {
   document.getElementById("syncStepChoice").style.display = step === "choice" ? "" : "none";
   document.getElementById("syncStepCreate").style.display = step === "create" ? "" : "none";
@@ -6181,9 +6189,17 @@ function showSyncStep(step) {
 });
 document.getElementById("syncGoCreate").addEventListener("click", () => showSyncStep("create"));
 document.getElementById("syncGoLogin").addEventListener("click", () => showSyncStep("login"));
-document.getElementById("syncGoLocal").addEventListener("click", () => { closeSyncModal(); if (!state.collectorName) openNameModal(true); });
+document.getElementById("syncGoLocal").addEventListener("click", dismissSyncModal);
+document.getElementById("syncCloseBtn").addEventListener("click", dismissSyncModal);
 document.getElementById("syncCreateBack").addEventListener("click", () => showSyncStep("choice"));
 document.getElementById("syncLoginBack").addEventListener("click", () => showSyncStep("choice"));
+// fechar clicando no fundo (fora do card) ou com Esc
+document.getElementById("syncModal").addEventListener("click", (e) => {
+  if (e.target.id === "syncModal") dismissSyncModal();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && document.getElementById("syncModal").style.display === "flex") dismissSyncModal();
+});
 
 document.getElementById("syncCreateSubmit").addEventListener("click", async () => {
   const name = document.getElementById("syncCreateName").value.trim();
