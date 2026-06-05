@@ -1931,8 +1931,12 @@
     /* Some com a barra de ações inline do header (foi movida pro drawer) */
     header .header-row > .header-actions { display: none; }
 
-    /* Filtros (Mostrar/Ordem) saem do header inline → vão pro drawer de filtros */
-    .filter-movable, .filter-movable-sep { display: none; }
+    /* Filtros (Mostrar/Ordem) saem do header inline → vão pro drawer de filtros.
+       Esconde só os que ainda estão no header (mesmo padrão do .header-actions);
+       quando movidos pro #filterDrawerBody pelo JS, voltam a aparecer (override abaixo). */
+    .header-controls > .filter-movable, .header-controls > .filter-movable-sep { display: none; }
+    #filterDrawerBody .filter-movable { display: flex; }
+    #filterDrawerBody .filter-movable-sep { display: none; }
     /* Botão funil aparece dentro da barra de busca, à direita */
     .control-block.search-block { position: relative; }
     .filter-fab {
