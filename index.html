@@ -2033,7 +2033,44 @@
     .stickers-grid { grid-template-columns: repeat(4, 1fr); }
     .header-title h1 { font-size: 14px; }
   }
+  /* ===== Sync online: badge de status no chip do colecionador ===== */
+  .sync-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    margin-left: 8px; padding: 2px 8px; border-radius: 999px;
+    font-size: 10px; font-weight: 700; letter-spacing: .3px;
+    border: 1px solid var(--border); cursor: pointer; user-select: none;
+    background: rgba(61,81,128,0.18); color: var(--text-muted);
+    transition: background .2s, color .2s, border-color .2s;
+    vertical-align: middle;
+  }
+  .sync-badge .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: 0 0 auto; }
+  .sync-badge:hover { border-color: var(--accent); }
+  .sync-badge.local   { color: #9aa6c2; }
+  .sync-badge.synced  { color: #4caf7e; border-color: rgba(76,175,126,.4); background: rgba(76,175,126,.12); }
+  .sync-badge.saving  { color: var(--accent-light); }
+  .sync-badge.saving .dot { animation: syncPulse .9s ease-in-out infinite; }
+  .sync-badge.offline { color: #e0a04a; border-color: rgba(224,160,74,.4); background: rgba(224,160,74,.12); }
+  .sync-badge.error   { color: #e57373; border-color: rgba(229,115,115,.4); background: rgba(229,115,115,.12); }
+  @keyframes syncPulse { 0%,100%{opacity:.35} 50%{opacity:1} }
+
+  /* Bloco de escolha no modal de sync */
+  .sync-choice { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 2px; }
+  .sync-choice button {
+    text-align: left; padding: 12px 14px; border-radius: 8px; cursor: pointer;
+    background: var(--bg-card-2); border: 1px solid var(--border); color: var(--text);
+    font-size: 13px; line-height: 1.35; transition: border-color .15s, background .15s;
+  }
+  .sync-choice button:hover { border-color: var(--accent); background: rgba(212,160,23,0.08); }
+  .sync-choice button strong { display: block; font-size: 13px; margin-bottom: 2px; color: var(--accent-light); }
+  .sync-choice button small { color: var(--text-muted); font-weight: 400; }
+  .sync-field-row { display: flex; gap: 10px; }
+  .sync-field-row > div { flex: 1; }
+  .sync-pin-input { letter-spacing: 6px; text-align: center; font-size: 18px !important; }
+  .sync-error-msg { color: #e57373; font-size: 12px; min-height: 16px; margin-top: 2px; }
+  .sync-back-link { background: none; border: none; color: var(--text-muted); font-size: 12px; cursor: pointer; padding: 4px 0; text-decoration: underline; }
 </style>
+<!-- SDK do Supabase (sync online opcional). defer = não bloqueia o render inicial. -->
+<script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 </head>
 <body>
 <header>
@@ -2053,6 +2090,9 @@
         Colecionador: <strong id="collectorName">—</strong>
         <span class="pencil">✏️</span>
       </div>
+      <span class="sync-badge local" id="syncBadge" title="Sincronização entre aparelhos">
+        <span class="dot"></span><span id="syncBadgeText">Só neste aparelho</span>
+      </span>
     </div>
     <div class="header-actions">
       <div class="header-actions-row">
@@ -2218,6 +2258,68 @@
       <button class="modal-btn primary" id="modalSaveBtn">Salvar</button>
     </div>
     <input type="file" id="welcomeImportFile" accept=".json" style="display:none">
+  </div>
+</div>
+
+<!-- Modal de SINCRONIZAÇÃO ONLINE (opcional): criar conta / entrar / só local -->
+<div class="modal-backdrop" id="syncModal" style="display:none">
+  <div class="modal">
+    <!-- Tela 1: escolha -->
+    <div id="syncStepChoice">
+      <h2>Sincronizar entre aparelhos</h2>
+      <div class="modal-subtitle">
+        Crie uma conta simples (um id e um PIN de 4 dígitos) para acessar seu álbum no celular e no computador, sempre atualizado. É opcional — você pode continuar usando só neste aparelho.
+      </div>
+      <div class="sync-choice">
+        <button id="syncGoCreate"><strong>✨ Criar minha conta de sincronização</strong><small>Escolha um id e um PIN. Suas marcações atuais sobem para a nuvem.</small></button>
+        <button id="syncGoLogin"><strong>🔑 Já tenho uma conta</strong><small>Entrar com meu id e PIN em mais um aparelho.</small></button>
+        <button id="syncGoLocal"><strong>📵 Continuar só neste aparelho</strong><small>Sem nuvem. Tudo fica salvo localmente, como antes.</small></button>
+      </div>
+    </div>
+
+    <!-- Tela 2: criar conta -->
+    <div id="syncStepCreate" style="display:none">
+      <h2>Criar conta de sincronização</h2>
+      <div class="modal-subtitle">Escolha um <strong>id</strong> único (só você precisa saber) e um <strong>PIN</strong> de 4 dígitos. Anote o PIN: sem ele não dá pra entrar em outro aparelho.</div>
+      <label for="syncCreateName">Seu nome (aparece no álbum)</label>
+      <input type="text" id="syncCreateName" maxlength="40" placeholder="Ex: Thiego" autocomplete="off">
+      <div class="sync-field-row">
+        <div>
+          <label for="syncCreateId">id único</label>
+          <input type="text" id="syncCreateId" maxlength="30" placeholder="ex: thiego-figura" autocomplete="off" autocapitalize="none" spellcheck="false">
+        </div>
+        <div>
+          <label for="syncCreatePin">PIN (4 dígitos)</label>
+          <input type="text" id="syncCreatePin" class="sync-pin-input" maxlength="4" inputmode="numeric" pattern="[0-9]*" placeholder="••••" autocomplete="off">
+        </div>
+      </div>
+      <div class="sync-error-msg" id="syncCreateError"></div>
+      <div class="modal-actions">
+        <button class="sync-back-link" id="syncCreateBack">← voltar</button>
+        <button class="modal-btn primary" id="syncCreateSubmit">Criar e sincronizar</button>
+      </div>
+    </div>
+
+    <!-- Tela 3: entrar -->
+    <div id="syncStepLogin" style="display:none">
+      <h2>Entrar na sua conta</h2>
+      <div class="modal-subtitle">Digite o <strong>id</strong> e o <strong>PIN</strong> que você criou no outro aparelho. Suas marcações deste aparelho serão somadas às da nuvem (nada é perdido).</div>
+      <div class="sync-field-row">
+        <div>
+          <label for="syncLoginId">id</label>
+          <input type="text" id="syncLoginId" maxlength="30" placeholder="seu id" autocomplete="off" autocapitalize="none" spellcheck="false">
+        </div>
+        <div>
+          <label for="syncLoginPin">PIN</label>
+          <input type="text" id="syncLoginPin" class="sync-pin-input" maxlength="4" inputmode="numeric" pattern="[0-9]*" placeholder="••••" autocomplete="off">
+        </div>
+      </div>
+      <div class="sync-error-msg" id="syncLoginError"></div>
+      <div class="modal-actions">
+        <button class="sync-back-link" id="syncLoginBack">← voltar</button>
+        <button class="modal-btn primary" id="syncLoginSubmit">Entrar e sincronizar</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -2785,6 +2887,10 @@ let state = {
   // Ex: BRA-14 tem entrada `collected[BRA-14] = true` e `duplicates[BRA-14] = 3`
   // significa: já colei + tenho 3 repetidas pra trocar.
   duplicates: {},
+  // clocks[id] = epoch_ms da última alteração daquela figurinha (marcação OU repetidas).
+  // Base do merge "última edição vence por figurinha" (LWW) na sincronização.
+  // Derivado automaticamente no saveState (diff vs snapshot anterior) — ver _stampClocks.
+  clocks: {},
   // Flag pra exibir o modal de ajuda do clique direito só uma vez
   repeatHelpShown: false,
   filter: "all",
@@ -2862,6 +2968,50 @@ function sanitizeStateAgainstSchema() {
   Object.keys(state.duplicates).forEach(k => {
     if (!validIds.has(k)) delete state.duplicates[k];
   });
+  if (state.clocks) Object.keys(state.clocks).forEach(k => {
+    if (!validIds.has(k)) delete state.clocks[k];
+  });
+}
+
+// ===== Relógios por figurinha (LWW) =====
+// "Assinatura" do estado efetivo de uma figurinha: marcada? + quantas repetidas.
+// Se isso mudar entre dois saves, a figurinha foi editada → ganha clock novo.
+function _effectiveSig(id) {
+  const has = state.collected[id] ? 1 : 0;
+  const dup = has ? (Number(state.duplicates[id]) || 0) : 0;
+  return has + ":" + dup;
+}
+// Snapshot do último estado salvo, por id, pra detectar mudanças.
+let _lastSigSnapshot = null;
+function _buildSigSnapshot() {
+  const snap = {};
+  const ids = new Set([...Object.keys(state.collected), ...Object.keys(state.duplicates)]);
+  ids.forEach(id => { snap[id] = _effectiveSig(id); });
+  return snap;
+}
+// Carimba clocks[id]=agora para toda figurinha cujo estado efetivo mudou desde
+// o último save. Captura marcar, desmarcar, repetidas, import, troca — tudo,
+// porque roda centralizado no saveState (não importa quem mutou o state).
+function _stampClocks() {
+  const now = Date.now();
+  if (!state.clocks) state.clocks = {};
+  const prev = _lastSigSnapshot || {};
+  const curr = _buildSigSnapshot();
+  // ids que aparecem em qualquer um dos dois lados
+  const ids = new Set([...Object.keys(prev), ...Object.keys(curr)]);
+  ids.forEach(id => {
+    const before = prev[id];           // undefined se não existia
+    const after = curr[id];            // undefined se sumiu (desmarcado e sem dup)
+    if (before !== after) state.clocks[id] = now;  // mudou de estado → novo clock
+  });
+  _lastSigSnapshot = curr;
+}
+// Garante um clock-base para ids que têm estado mas nenhum clock (migração de
+// dados antigos / backups). Clock baixo (1) => perde para qualquer edição nova.
+function _ensureBaseClocks() {
+  if (!state.clocks) state.clocks = {};
+  const ids = new Set([...Object.keys(state.collected), ...Object.keys(state.duplicates)]);
+  ids.forEach(id => { if (!state.clocks[id]) state.clocks[id] = 1; });
 }
 
 function loadState() {
@@ -2872,11 +3022,13 @@ function loadState() {
       const migrated = migrateSpecialsIds(parsed.collected || {}, parsed.duplicates || {});
       state.collected = migrated.collected;
       state.duplicates = migrated.duplicates;
+      state.clocks = (parsed.clocks && typeof parsed.clocks === "object") ? parsed.clocks : {};
       state.teamOrder = parsed.teamOrder || {};
       state.collectorName = parsed.collectorName || "";
       state.repeatHelpShown = !!parsed.repeatHelpShown;
       pruneRedundantTeamOrder();
       sanitizeStateAgainstSchema();
+      _ensureBaseClocks();             // dados antigos sem clocks → clock-base 1
     }
     const meta = localStorage.getItem(BACKUP_META_KEY);
     if (meta) {
@@ -2886,14 +3038,17 @@ function loadState() {
       state.marksSinceBackup = m.marksSinceBackup || 0;
     }
   } catch (e) { console.warn("falha ao carregar", e); }
+  _lastSigSnapshot = _buildSigSnapshot(); // baseline pós-load (não carimba o load em si)
 }
 function saveState() {
   try {
+    _stampClocks();                  // detecta o que mudou e carimba os clocks
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       collectorName: state.collectorName,
       collected: state.collected,
       teamOrder: state.teamOrder,
       duplicates: state.duplicates,
+      clocks: state.clocks,
       repeatHelpShown: state.repeatHelpShown,
     }));
     localStorage.setItem(BACKUP_META_KEY, JSON.stringify({
@@ -3443,14 +3598,15 @@ function renderBackupStatus() {
 
 function exportBackup() {
   // version 6: adicionado bloco Coca-Cola (CC-1..CC-14).
-  // Backups v5 e anteriores são lidos sem migração: IDs CC-* simplesmente
-  // não existem no dicionário collected e ficam desmarcados (comportamento correto).
+  // version 7: adicionado `clocks` (relógios LWW por figurinha p/ sincronização).
+  // Backups v6 e anteriores são lidos sem clocks → recebem clock-base na importação.
   const data = JSON.stringify({
-    version: 6,
+    version: 7,
     exportedAt: new Date().toISOString(),
     collectorName: state.collectorName,
     collected: state.collected,
     duplicates: state.duplicates,
+    clocks: state.clocks || {},
     teamOrder: state.teamOrder,
     haveCount: Object.keys(state.collected).length,
   }, null, 2);
@@ -5414,6 +5570,9 @@ function applyImport(data, strategy, adoptName) {
   const migrated = migrateSpecialsIds(data.collected || {}, data.duplicates || {});
   const incomingCol = migrated.collected;
   const incomingDup = migrated.duplicates;
+  // clocks do backup (v7+). Backups antigos não têm → ficam vazios e o
+  // saveState/_stampClocks carimba o que mudar com "agora" (import = edição atual).
+  const incomingClk = (data.clocks && typeof data.clocks === "object") ? data.clocks : {};
   if (strategy === "merge") {
     // União: marca tudo que estava antes + tudo do backup (já migrado)
     Object.keys(incomingCol).forEach(k => { state.collected[k] = true; });
@@ -5424,10 +5583,15 @@ function applyImport(data, strategy, adoptName) {
       const max = Math.max(cur, inc);
       if (max > 0) state.duplicates[k] = max;
     });
+    // adota clocks do backup quando forem mais novos que os locais
+    Object.keys(incomingClk).forEach(k => {
+      if ((Number(incomingClk[k]) || 0) > (Number(state.clocks[k]) || 0)) state.clocks[k] = incomingClk[k];
+    });
   } else {
-    // Overwrite: replace total
+    // Overwrite: replace total (inclusive clocks — o backup passa a ser a verdade)
     state.collected = { ...incomingCol };
     state.duplicates = { ...incomingDup };
+    state.clocks = { ...incomingClk };
   }
   if (data.teamOrder) state.teamOrder = { ...data.teamOrder };
   if (adoptName && typeof data.collectorName === "string") {
@@ -5671,14 +5835,427 @@ window.addEventListener("beforeunload", (e) => {
 });
 
 // ============================================================
+// SINCRONIZAÇÃO ONLINE (opcional) — Supabase (projeto pessoal)
+// Estratégia: localStorage continua sendo a verdade local e instantânea.
+// O Supabase é uma CAMADA por cima: push com debounce ao salvar, e pull
+// (com merge "mesclar tudo") no boot, ao focar a aba e por polling leve.
+// Conta é OPCIONAL: sem conta, o app funciona 100% local como antes.
+// Acesso só via RPCs album_* que exigem id+PIN (tabela fechada por RLS).
+// ============================================================
+const SUPA_URL  = "https://evbsrhswkiahoqbadwcy.supabase.co";
+const SUPA_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV2YnNyaHN3a2lhaG9xYmFkd2N5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1NDI2MDksImV4cCI6MjA5NjExODYwOX0.VerONjqEwiFswXGAgD5ZWq7owEtqzqxmG5Jy3tqTGGI";
+const SYNC_ACCOUNT_KEY = "album_copa_2026_sync_account"; // { id, pin, displayName }
+const POLL_INTERVAL_MS = 18000;
+
+const syncLayer = (function () {
+  let sb = null;                 // cliente supabase
+  let account = null;            // { id, pin, displayName } ou null
+  let localVersion = 0;          // última version conhecida da nuvem
+  let pushTimer = null;          // debounce do push
+  let pollTimer = null;          // intervalo de polling
+  let pushing = false, pulling = false;
+  let pendingPush = false;       // marca que houve mudança durante um push em andamento
+
+  function loadAccount() {
+    try {
+      const raw = localStorage.getItem(SYNC_ACCOUNT_KEY);
+      account = raw ? JSON.parse(raw) : null;
+    } catch (_) { account = null; }
+    return account;
+  }
+  function saveAccount(acc) {
+    account = acc;
+    if (acc) localStorage.setItem(SYNC_ACCOUNT_KEY, JSON.stringify(acc));
+    else localStorage.removeItem(SYNC_ACCOUNT_KEY);
+  }
+  function isEnabled() { return !!account; }
+
+  // Inicializa o cliente Supabase. Retorna false se o SDK não carregou.
+  function ensureClient() {
+    if (sb) return true;
+    if (!window.supabase || !window.supabase.createClient) return false;
+    try {
+      sb = window.supabase.createClient(SUPA_URL, SUPA_ANON, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      return true;
+    } catch (e) { console.warn("sync: falha ao criar client", e); return false; }
+  }
+
+  // ---- Badge de status no header ----
+  function setStatus(kind, text) {
+    const badge = document.getElementById("syncBadge");
+    const txt = document.getElementById("syncBadgeText");
+    if (!badge || !txt) return;
+    badge.className = "sync-badge " + kind;
+    txt.textContent = text;
+  }
+  function refreshStatus(kind) {
+    if (!isEnabled()) { setStatus("local", "Só neste aparelho"); return; }
+    if (kind === "saving")  return setStatus("saving", "Salvando…");
+    if (kind === "offline") return setStatus("offline", "Offline — salvo aqui");
+    if (kind === "error")   return setStatus("error", "Erro de sync");
+    setStatus("synced", "Sincronizado");
+  }
+
+  // ---- Merge LWW (última edição vence POR FIGURINHA) no lado cliente ----
+  // Para cada figurinha (local ∪ remoto), compara o clock; o lado com clock
+  // MAIOR define a marcação E o contador de repetidas daquela figurinha.
+  // Assim, desmarcar em X+1 vence uma marcação de X (resolve a "ressurreição").
+  // Empate de clock → mantém o local (evita flicker). Não desmarca quem o
+  // remoto não conhece (id sem clock remoto e ausente lá = mudança só local).
+  function mergeRemoteIntoLocal(remote) {
+    if (!remote || typeof remote !== "object") return false;
+    if (!state.clocks) state.clocks = {};
+    const rc = remote.collected || {};
+    const rd = remote.duplicates || {};
+    const rk = remote.clocks || {};
+    let changed = false;
+
+    // Universo de ids a reconciliar: tudo que tem clock em qualquer lado,
+    // mais o que está marcado/com dup em qualquer lado (defensivo).
+    const ids = new Set([
+      ...Object.keys(rk), ...Object.keys(state.clocks),
+      ...Object.keys(rc), ...Object.keys(state.collected),
+      ...Object.keys(rd), ...Object.keys(state.duplicates),
+    ]);
+
+    ids.forEach(id => {
+      const lClock = Number(state.clocks[id]) || 0;
+      const rClock = Number(rk[id]) || 0;
+      if (rClock <= lClock) return;     // local é igual/mais novo → mantém local
+
+      // remoto é mais novo p/ esta figurinha → adota o estado remoto dela
+      const rHas = !!rc[id];
+      const rDup = rHas ? (Number(rd[id]) || 0) : 0;
+      const lHas = !!state.collected[id];
+      const lDup = lHas ? (Number(state.duplicates[id]) || 0) : 0;
+
+      if (rHas !== lHas || rDup !== lDup) {
+        if (rHas) { state.collected[id] = true; }
+        else { delete state.collected[id]; }
+        if (rHas && rDup > 0) { state.duplicates[id] = rDup; }
+        else { delete state.duplicates[id]; }
+        changed = true;
+      }
+      state.clocks[id] = rClock;        // adota o clock remoto (mais novo)
+    });
+
+    // teamOrder: adota chaves que o local não tem (preferência, sem clock)
+    const rt = remote.teamOrder || {};
+    for (const k in rt) {
+      if (!state.teamOrder[k]) { state.teamOrder[k] = rt[k]; changed = true; }
+    }
+    // nome: adota o remoto se o local estiver vazio
+    if (!state.collectorName && remote.collectorName) { state.collectorName = remote.collectorName; changed = true; }
+
+    if (changed) {
+      sanitizeStateAgainstSchema();
+      // grava local sem re-disparar push e SEM re-carimbar os clocks recém-adotados:
+      // sincroniza o baseline do _stampClocks com o estado pós-merge primeiro.
+      _lastSigSnapshot = _buildSigSnapshot();
+      _rawSaveState();
+    }
+    return changed;
+  }
+
+  // Monta o payload do state (mesmo recorte que o saveState local persiste).
+  function buildStatePayload() {
+    return {
+      collectorName: state.collectorName,
+      collected: state.collected,
+      teamOrder: state.teamOrder,
+      duplicates: state.duplicates,
+      clocks: state.clocks || {},      // relógios LWW por figurinha (merge no banco)
+      repeatHelpShown: state.repeatHelpShown,
+    };
+  }
+
+  // ---- PUSH (debounced) ----
+  function schedulePush() {
+    if (!isEnabled()) return;
+    if (pushTimer) clearTimeout(pushTimer);
+    pushTimer = setTimeout(doPush, 1500);
+  }
+  async function doPush() {
+    if (!isEnabled() || !ensureClient()) return;
+    if (pushing) { pendingPush = true; return; }   // coalescing: marca p/ rodar de novo depois
+    pushing = true;
+    refreshStatus("saving");
+    try {
+      const { data, error } = await sb.rpc("album_save", {
+        p_user_id: account.id, p_pin: account.pin, p_state: buildStatePayload(),
+      });
+      if (error) throw error;
+      if (data && data.ok) {
+        localVersion = data.version || localVersion;
+        // o banco devolve o state já mesclado — reconcilia local (caso outro device tenha somado)
+        if (mergeRemoteIntoLocal(data.state)) render();
+        refreshStatus("synced");
+      } else if (data && data.error === "credenciais") {
+        // PIN mudou/conta inválida — desliga sync e avisa
+        handleAuthError();
+      } else {
+        refreshStatus("error");
+      }
+    } catch (e) {
+      console.warn("sync push falhou", e);
+      refreshStatus("offline");
+    } finally {
+      pushing = false;
+      if (pendingPush) { pendingPush = false; schedulePush(); }
+    }
+  }
+
+  // ---- PULL (com merge) ----
+  async function doPull(opts = {}) {
+    if (!isEnabled() || !ensureClient()) return;
+    if (pulling) return;
+    pulling = true;
+    try {
+      const { data, error } = await sb.rpc("album_login", {
+        p_user_id: account.id, p_pin: account.pin,
+      });
+      if (error) throw error;
+      if (data && data.ok) {
+        const remoteChanged = (data.version || 0) !== localVersion;
+        localVersion = data.version || localVersion;
+        const merged = mergeRemoteIntoLocal(data.state);
+        if (merged) { renderCollectorChip(); render(); }
+        refreshStatus("synced");
+        // se o merge local trouxe algo novo que a nuvem não tinha, sobe de volta
+        if (merged) schedulePush();
+      } else if (data && data.error === "credenciais") {
+        handleAuthError();
+      }
+    } catch (e) {
+      console.warn("sync pull falhou", e);
+      refreshStatus("offline");
+    } finally {
+      pulling = false;
+    }
+  }
+
+  function handleAuthError() {
+    refreshStatus("error");
+    showToast("Sua conta de sync expirou ou o PIN mudou. Entre de novo.");
+    // mantém os dados locais; só desliga a sessão de sync
+    saveAccount(null);
+    stopPolling();
+    refreshStatus("local");
+  }
+
+  // ---- Polling leve + foco da aba ----
+  function startPolling() {
+    stopPolling();
+    if (!isEnabled()) return;
+    pollTimer = setInterval(() => { if (!document.hidden) doPull(); }, POLL_INTERVAL_MS);
+  }
+  function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+
+  function onVisibility() { if (!document.hidden && isEnabled()) doPull(); }
+
+  // ---- Ações expostas (modal) ----
+  async function signup(id, pin, displayName) {
+    if (!ensureClient()) return { ok: false, message: "Sem conexão. Tente mais tarde." };
+    try {
+      const { data, error } = await sb.rpc("album_signup", {
+        p_user_id: id, p_pin: pin, p_display_name: displayName || state.collectorName || "",
+        p_state: buildStatePayload(),
+      });
+      if (error) throw error;
+      if (data && data.ok) {
+        saveAccount({ id: data.user_id, pin, displayName: data.display_name });
+        localVersion = data.version || 1;
+        if (displayName) { state.collectorName = displayName; _rawSaveState(); renderCollectorChip(); }
+        startPolling();
+        refreshStatus("synced");
+      }
+      return data || { ok: false, message: "Resposta inesperada." };
+    } catch (e) {
+      console.warn("signup erro", e);
+      return { ok: false, message: "Erro de conexão. Tente novamente." };
+    }
+  }
+  async function login(id, pin) {
+    if (!ensureClient()) return { ok: false, message: "Sem conexão. Tente mais tarde." };
+    try {
+      const { data, error } = await sb.rpc("album_login", { p_user_id: id, p_pin: pin });
+      if (error) throw error;
+      if (data && data.ok) {
+        saveAccount({ id: data.user_id, pin, displayName: data.display_name });
+        localVersion = data.version || 0;
+        // mescla a nuvem no local e o local na nuvem (nada se perde)
+        const merged = mergeRemoteIntoLocal(data.state);
+        renderCollectorChip(); render();
+        startPolling();
+        refreshStatus("synced");
+        schedulePush(); // garante que o que era só local sobe
+      }
+      return data || { ok: false, message: "Resposta inesperada." };
+    } catch (e) {
+      console.warn("login erro", e);
+      return { ok: false, message: "Erro de conexão. Tente novamente." };
+    }
+  }
+  function logout() {
+    saveAccount(null);
+    stopPolling();
+    refreshStatus("local");
+    showToast("Sincronização desligada. Seus dados continuam salvos aqui.");
+  }
+  async function checkId(id) {
+    if (!ensureClient()) return null;
+    try {
+      const { data, error } = await sb.rpc("album_check_id", { p_user_id: id });
+      if (error) throw error;
+      return data; // true = livre
+    } catch (_) { return null; }
+  }
+
+  // Espera o SDK (carregado com defer) ficar disponível. Timeout de segurança:
+  // se não chegar em ~6s (offline/CDN bloqueado), segue em modo degradado.
+  function waitForSdk(timeoutMs = 6000) {
+    return new Promise((resolve) => {
+      if (window.supabase && window.supabase.createClient) return resolve(true);
+      const t0 = Date.now();
+      const iv = setInterval(() => {
+        if (window.supabase && window.supabase.createClient) { clearInterval(iv); resolve(true); }
+        else if (Date.now() - t0 > timeoutMs) { clearInterval(iv); resolve(false); }
+      }, 80);
+    });
+  }
+
+  // ---- Boot da camada: restaura sessão se existir ----
+  async function boot() {
+    loadAccount();
+    if (!isEnabled()) { refreshStatus("local"); return; }
+    refreshStatus("saving");           // tem conta → mostra "Salvando…" até confirmar
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onVisibility);
+    const sdkOk = await waitForSdk();
+    if (!sdkOk) { refreshStatus("offline"); return; } // sem SDK: degrada, recupera depois
+    await doPull();        // puxa e mescla a nuvem no boot
+    startPolling();
+  }
+
+  return {
+    boot, signup, login, logout, checkId, schedulePush,
+    isEnabled, refreshStatus, getAccount: () => account,
+  };
+})();
+
+// Guarda a referência original do saveState e o "envelopa" pra disparar o push.
+const _rawSaveState = saveState;
+saveState = function () {
+  _rawSaveState();                 // verdade local instantânea (como antes)
+  if (syncLayer.isEnabled()) syncLayer.schedulePush(); // nuvem em 2º plano
+};
+
+// ============================================================
+// MODAL DE SYNC — wiring
+// ============================================================
+function openSyncModal(step = "choice") {
+  document.getElementById("syncModal").style.display = "flex";
+  showSyncStep(step);
+}
+function closeSyncModal() { document.getElementById("syncModal").style.display = "none"; }
+function showSyncStep(step) {
+  document.getElementById("syncStepChoice").style.display = step === "choice" ? "" : "none";
+  document.getElementById("syncStepCreate").style.display = step === "create" ? "" : "none";
+  document.getElementById("syncStepLogin").style.display  = step === "login"  ? "" : "none";
+  const focusId = step === "create" ? "syncCreateName" : step === "login" ? "syncLoginId" : null;
+  if (focusId) setTimeout(() => { const el = document.getElementById(focusId); if (el) el.focus(); }, 50);
+}
+// só dígitos nos PINs
+["syncCreatePin", "syncLoginPin"].forEach(id => {
+  document.getElementById(id).addEventListener("input", (e) => {
+    e.target.value = e.target.value.replace(/\D/g, "").slice(0, 4);
+  });
+});
+// id sempre minúsculo/limpo
+["syncCreateId", "syncLoginId"].forEach(id => {
+  document.getElementById(id).addEventListener("input", (e) => {
+    e.target.value = e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, "").slice(0, 30);
+  });
+});
+document.getElementById("syncGoCreate").addEventListener("click", () => showSyncStep("create"));
+document.getElementById("syncGoLogin").addEventListener("click", () => showSyncStep("login"));
+document.getElementById("syncGoLocal").addEventListener("click", () => { closeSyncModal(); if (!state.collectorName) openNameModal(true); });
+document.getElementById("syncCreateBack").addEventListener("click", () => showSyncStep("choice"));
+document.getElementById("syncLoginBack").addEventListener("click", () => showSyncStep("choice"));
+
+document.getElementById("syncCreateSubmit").addEventListener("click", async () => {
+  const name = document.getElementById("syncCreateName").value.trim();
+  const id = document.getElementById("syncCreateId").value.trim();
+  const pin = document.getElementById("syncCreatePin").value.trim();
+  const err = document.getElementById("syncCreateError");
+  err.textContent = "";
+  if (id.length < 3) { err.textContent = "O id precisa de pelo menos 3 caracteres."; return; }
+  if (!/^\d{4}$/.test(pin)) { err.textContent = "O PIN precisa ter 4 dígitos."; return; }
+  const btn = document.getElementById("syncCreateSubmit");
+  btn.disabled = true; btn.textContent = "Criando…";
+  const res = await syncLayer.signup(id, pin, name);
+  btn.disabled = false; btn.textContent = "Criar e sincronizar";
+  if (res && res.ok) {
+    closeSyncModal();
+    showToast(`Conta criada! Sincronizado como "${id}".`);
+    renderCollectorChip();
+  } else {
+    err.textContent = (res && res.message) || "Não foi possível criar a conta.";
+  }
+});
+
+document.getElementById("syncLoginSubmit").addEventListener("click", async () => {
+  const id = document.getElementById("syncLoginId").value.trim();
+  const pin = document.getElementById("syncLoginPin").value.trim();
+  const err = document.getElementById("syncLoginError");
+  err.textContent = "";
+  if (id.length < 3 || !/^\d{4}$/.test(pin)) { err.textContent = "Informe o id e o PIN de 4 dígitos."; return; }
+  const btn = document.getElementById("syncLoginSubmit");
+  btn.disabled = true; btn.textContent = "Entrando…";
+  const res = await syncLayer.login(id, pin);
+  btn.disabled = false; btn.textContent = "Entrar e sincronizar";
+  if (res && res.ok) {
+    closeSyncModal();
+    showToast(`Bem-vindo de volta! Sincronizado como "${id}".`);
+  } else {
+    err.textContent = (res && res.message) || "id ou PIN incorretos.";
+  }
+});
+
+// Enter nos campos do modal de sync
+["syncCreateName","syncCreateId","syncCreatePin"].forEach(id =>
+  document.getElementById(id).addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); document.getElementById("syncCreateSubmit").click(); } }));
+["syncLoginId","syncLoginPin"].forEach(id =>
+  document.getElementById(id).addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); document.getElementById("syncLoginSubmit").click(); } }));
+
+// Clique no badge: abre opções (criar/entrar) ou oferece desligar se já ativo
+document.getElementById("syncBadge").addEventListener("click", () => {
+  if (syncLayer.isEnabled()) {
+    const acc = syncLayer.getAccount();
+    if (confirm(`Sincronizando como "${acc.id}".\n\nDeseja desligar a sincronização neste aparelho? (seus dados continuam salvos localmente)`)) {
+      syncLayer.logout();
+    }
+  } else {
+    openSyncModal("choice");
+  }
+});
+
+// ============================================================
 // INIT
 // ============================================================
 loadState();
 renderCollectorChip();
 render();
-if (!state.collectorName) {
-  openNameModal(true);
-}
+
+// Boot da sync. Se já há conta salva, restaura e puxa da nuvem.
+// Se NÃO há conta nem nome: primeiro acesso → oferece sincronização (com opção de só-local).
+syncLayer.boot().then(() => {
+  if (!syncLayer.isEnabled() && !state.collectorName) {
+    openSyncModal("choice");   // welcome: escolher sync ou local
+  }
+});
 </script>
 </body>
 </html>
