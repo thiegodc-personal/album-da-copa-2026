@@ -1842,15 +1842,18 @@
 
   /* Botão de filtro (funil) na barra de busca — só visível no mobile */
   .filter-fab { display: none; }
-  /* Drawer que abre pela direita (filtros) */
-  .drawer-right {
+  /* Drawer que abre pela direita (filtros). Ancorado por id (#filterDrawer)
+     para vencer a regra genérica `.drawer` (mesma especificidade, mas o id
+     ganha) — senão o `.drawer { transform: translateX(-100%) }` posterior
+     jogaria este drawer pra esquerda. Garante posição/lado corretos. */
+  #filterDrawer.drawer-right {
     left: auto; right: 0;
     border-right: none;
     border-left: 1px solid var(--border-strong);
     box-shadow: -4px 0 24px rgba(0,0,0,0.6);
     transform: translateX(100%);
   }
-  body.filter-drawer-open .drawer-right { transform: translateX(0); }
+  body.filter-drawer-open #filterDrawer.drawer-right { transform: translateX(0); }
   body.filter-drawer-open #filterBackdrop { opacity: 1; pointer-events: auto; }
   /* Dentro do drawer de filtros, blocos empilhados e botões largos */
   #filterDrawerBody .control-block { flex-direction: column; align-items: stretch; gap: 8px; padding: 0; background: none; border: none; }
@@ -1886,7 +1889,7 @@
     opacity: 0; pointer-events: none;
     transition: opacity 0.2s;
   }
-  body.drawer-open .drawer-backdrop { opacity: 1; pointer-events: auto; }
+  body.drawer-open #drawerBackdrop { opacity: 1; pointer-events: auto; }
   .drawer {
     position: fixed;
     top: 0; left: 0; bottom: 0;
@@ -1900,17 +1903,36 @@
     flex-direction: column;
     overflow-y: auto;
   }
-  body.drawer-open .drawer { transform: translateX(0); }
+  /* Abre SÓ o drawer de ações (#drawer). Não usar `.drawer` genérico aqui:
+     a classe é compartilhada com o #filterDrawer (.drawer-right), e o seletor
+     genérico arrastava o drawer de filtros junto — o hambúrguer abria a tela
+     de filtros por cima. Escopado por id resolve. */
+  body.drawer-open #drawer { transform: translateX(0); }
   .drawer-head {
     display: flex; align-items: center; justify-content: space-between;
     padding: 16px 18px 12px;
     border-bottom: 1px solid var(--border);
-    position: sticky; top: 0;
     background: var(--bg-card-2);
+    flex: 0 0 auto;
+    /* NÃO usar position:sticky aqui: dentro de um ancestral com transform
+       (o .drawer usa translateX), o iOS Safari quebra o hit-testing do
+       botão de fechar — o toque "erra" o alvo. O conteúdo é curto e não
+       precisa de sticky. */
   }
   .drawer-title { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: var(--accent-light); }
-  .drawer-close { background: none; border: none; color: var(--text-muted); font-size: 26px; line-height: 1; cursor: pointer; padding: 0 4px; }
+  .drawer-close {
+    background: none; border: none; color: var(--text-muted);
+    font-size: 26px; line-height: 1; cursor: pointer;
+    /* alvo de toque maior e blindagem p/ iOS Safari */
+    min-width: 44px; min-height: 44px;
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 0; margin: -6px -6px -6px 0;
+    position: relative; z-index: 2;
+    -webkit-tap-highlight-color: rgba(212,160,23,0.25);
+    touch-action: manipulation;
+  }
   .drawer-close:hover { color: var(--text); }
+  .drawer-close:active { color: var(--accent-light); }
   .drawer-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
   /* Dentro do drawer, as duas linhas de botões viram coluna única, botões largos */
   .drawer-body .header-actions { display: flex; flex-direction: column; gap: 10px; width: 100%; }
@@ -1920,6 +1942,20 @@
     padding: 12px 14px; font-size: 12px;
     flex: none;
   }
+  /* Uniformiza TODOS os botões no menu mobile (fonte/peso/ícone iguais).
+     Usa #drawerBody (id) + os ids dos botões de copiar para vencer a regra
+     `.header-actions-row #copyMissingBtn { font-size: 8.5px }` (do header
+     desktop), que senão deixava só esses dois menores dentro do drawer. */
+  #drawerBody .header-btn,
+  #drawerBody #copyMissingBtn,
+  #drawerBody #copyDuplicatesBtn {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    padding: 12px 14px;
+    gap: 10px;
+  }
+  #drawerBody .header-btn .btn-icon { width: 16px; height: 16px; flex: 0 0 auto; }
   .drawer-body .header-btn .btn-icon { width: 16px; height: 16px; }
   .drawer-body .header-actions-row.secondary { border-top: 1px dashed rgba(61,81,128,0.4); padding-top: 12px; }
 
@@ -3567,11 +3603,27 @@ function formatDate(iso) {
   return d.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
 }
 
+// True se a sincronização online está ativa (conta logada). Defensivo: se a
+// camada de sync ainda não foi inicializada, retorna false (modo só-local).
+function isSyncOn() {
+  try { return typeof syncLayer !== "undefined" && syncLayer.isEnabled(); }
+  catch (_) { return false; }
+}
+
 function renderBackupStatus() {
   const warn = document.getElementById("backupWarning");
   const txt = document.getElementById("warnText");
   const lbl = document.getElementById("lastBackupLabel");
   const totalHave = Object.keys(state.collected).length;
+
+  // Com a sincronização online ativa, o progresso já está salvo na nuvem em
+  // tempo real — o aviso de "faça backup pra não perder" perde o sentido.
+  // Some com o alerta e troca o rótulo por um informativo de sync.
+  if (isSyncOn()) {
+    warn.style.display = "none";
+    lbl.textContent = "Sincronizado na nuvem — backup automático ativo.";
+    return;
+  }
 
   if (state.lastBackupAt) {
     lbl.textContent = `Último backup: ${formatDate(state.lastBackupAt)} (${state.lastBackupCount} marcadas)`;
@@ -3786,6 +3838,21 @@ document.getElementById("headerCollapseBtn").addEventListener("click", () => {
   // Os pills seguem funcionando; recalcula nada além disso
 });
 
+// Liga um handler de "fechar/tocar" de forma robusta no iOS Safari, onde o
+// `click` em botões dentro de containers transformados às vezes não dispara.
+// Usa touchend (com preventDefault p/ evitar o click-fantasma duplo) + click.
+function bindTapClose(el, handler) {
+  if (!el) return;
+  let touched = false;
+  el.addEventListener("touchend", (e) => {
+    touched = true;
+    e.preventDefault();   // evita o "ghost click" ~300ms depois
+    handler(e);
+    setTimeout(() => { touched = false; }, 500);
+  }, { passive: false });
+  el.addEventListener("click", (e) => { if (!touched) handler(e); });
+}
+
 // ===== Menu lateral (drawer) no mobile =====
 // Move o nó .header-actions (com seus handlers já ligados) entre o header e o drawer
 // conforme a largura da tela. Reaproveita os MESMOS botões — zero duplicação de JS.
@@ -3816,7 +3883,7 @@ document.getElementById("headerCollapseBtn").addEventListener("click", () => {
   function closeDrawer() { document.body.classList.remove("drawer-open"); }
 
   hamburger.addEventListener("click", openDrawer);
-  closeBtn.addEventListener("click", closeDrawer);
+  bindTapClose(closeBtn, closeDrawer);
   backdrop.addEventListener("click", closeDrawer);
   // Fechar o drawer ao tocar em qualquer botão de ação dentro dele
   drawerBody.addEventListener("click", (e) => {
@@ -3862,7 +3929,7 @@ document.getElementById("headerCollapseBtn").addEventListener("click", () => {
   function closeFilterDrawer() { document.body.classList.remove("filter-drawer-open"); }
 
   fab.addEventListener("click", openFilterDrawer);
-  closeBtn.addEventListener("click", closeFilterDrawer);
+  bindTapClose(closeBtn, closeFilterDrawer);
   backdrop.addEventListener("click", closeFilterDrawer);
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && document.body.classList.contains("filter-drawer-open")) closeFilterDrawer();
@@ -5826,9 +5893,10 @@ document.getElementById("modalNameInput").addEventListener("keydown", (e) => {
   }
 });
 
-// Avisa o usuário ao fechar a aba se há mudanças sem backup há tempo
+// Avisa o usuário ao fechar a aba se há mudanças sem backup há tempo.
+// Com sync online ativa não avisa: o progresso já está salvo na nuvem.
 window.addEventListener("beforeunload", (e) => {
-  if (state.marksSinceBackup >= 30) {
+  if (!isSyncOn() && state.marksSinceBackup >= 30) {
     e.preventDefault();
     e.returnValue = "Você tem alterações sem backup. Deseja sair mesmo assim?";
     return e.returnValue;
@@ -6071,6 +6139,7 @@ const syncLayer = (function () {
         if (displayName) { state.collectorName = displayName; _rawSaveState(); renderCollectorChip(); }
         startPolling();
         refreshStatus("synced");
+        render();   // some com o aviso de backup (agora redundante c/ sync ativa)
       }
       return data || { ok: false, message: "Resposta inesperada." };
     } catch (e) {
@@ -6104,6 +6173,7 @@ const syncLayer = (function () {
     stopPolling();
     refreshStatus("local");
     showToast("Sincronização desligada. Seus dados continuam salvos aqui.");
+    render();   // reavalia o aviso de backup (pode voltar a aparecer no modo local)
   }
   async function checkId(id) {
     if (!ensureClient()) return null;

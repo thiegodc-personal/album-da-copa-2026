@@ -10,3 +10,6 @@ github_*.json
 # Sistema
 Thumbs.db
 .DS_Store
+
+# Config local de dev/preview (não versionar)
+.claude/
