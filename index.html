@@ -2360,6 +2360,22 @@
   </div>
 </div>
 
+<!-- Modal de CONTA (abre ao clicar no badge "Sincronizado"): gerenciar a conta -->
+<div class="modal-backdrop" id="accountModal" style="display:none">
+  <div class="modal">
+    <button class="modal-close" id="accountCloseBtn" aria-label="Fechar" title="Fechar">×</button>
+    <h2>Sua conta</h2>
+    <div class="modal-subtitle">
+      Sincronizando como <strong id="accountIdLabel">—</strong>. Seu progresso é salvo automaticamente na nuvem. O que você quer fazer?
+    </div>
+    <div class="sync-choice">
+      <button id="accDisconnect"><strong>🔌 Desconectar (manter o que está aqui)</strong><small>Para de sincronizar, mas mantém as marcações atuais salvas só neste aparelho.</small></button>
+      <button id="accSwitch"><strong>🔄 Trocar de conta</strong><small>Desconecta, limpa este aparelho e carrega as figurinhas de outra conta (id + PIN).</small></button>
+      <button id="accReset"><strong>🗑️ Desconectar e começar do zero</strong><small>Apaga tudo deste aparelho (figurinhas, repetidas e nome) e volta à tela inicial. Os dados na nuvem da sua conta NÃO são apagados.</small></button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop" id="importModal" style="display:none">
   <div class="modal">
     <h2 id="importModalTitle">Importar backup</h2>
@@ -5751,11 +5767,26 @@ document.getElementById("welcomeImportFile").addEventListener("change", (e) => {
   closeNameModal();
 });
 
-function performReset() {
+// Limpeza COMPLETA do estado local (figurinhas, repetidas, relógios LWW,
+// ordem e nome). Usada pelo reset e pela troca de conta. Não toca na nuvem.
+function clearAllLocalData() {
   state.collected = {};
+  state.duplicates = {};
+  state.clocks = {};
   state.teamOrder = {};
   state.collectorName = "";
   state.marksSinceBackup = 0;
+  state.lastBackupAt = null;
+  state.lastBackupCount = 0;
+  // Rebaseia o snapshot de assinatura para o estado JÁ vazio. Sem isto, o
+  // _stampClocks (no próximo saveState) veria "tudo mudou de marcado→vazio" e
+  // recarimbaria clocks órfãos com timestamp atual — o que, ao carregar outra
+  // conta depois, poderia DESMARCAR figurinhas dela no merge LWW. Crítico.
+  _lastSigSnapshot = _buildSigSnapshot();
+}
+
+function performReset() {
+  clearAllLocalData();
   saveState();
   renderCollectorChip();
   render();
@@ -6175,6 +6206,43 @@ const syncLayer = (function () {
     showToast("Sincronização desligada. Seus dados continuam salvos aqui.");
     render();   // reavalia o aviso de backup (pode voltar a aparecer no modo local)
   }
+  // Login que SUBSTITUI o estado local pelo da conta (sem merge, sem push de
+  // volta). Usado na "troca de conta": o que estava neste aparelho é descartado
+  // e passa a valer só o que está na nuvem do novo usuário.
+  async function loginReplace(id, pin) {
+    if (!ensureClient()) return { ok: false, message: "Sem conexão. Tente mais tarde." };
+    try {
+      const { data, error } = await sb.rpc("album_login", { p_user_id: id, p_pin: pin });
+      if (error) throw error;
+      if (data && data.ok) {
+        // limpa tudo o que era local ANTES de aplicar o remoto puro
+        clearAllLocalData();
+        const rs = data.state || {};
+        state.collected   = { ...(rs.collected   || {}) };
+        state.duplicates  = { ...(rs.duplicates  || {}) };
+        state.clocks      = { ...(rs.clocks      || {}) };
+        state.teamOrder   = { ...(rs.teamOrder   || {}) };
+        state.collectorName = rs.collectorName || data.display_name || "";
+        state.repeatHelpShown = !!rs.repeatHelpShown;
+        sanitizeStateAgainstSchema();
+        saveAccount({ id: data.user_id, pin, displayName: data.display_name });
+        localVersion = data.version || 0;
+        // Rebaseia o snapshot para o estado remoto recém-aplicado, senão o
+        // _stampClocks (dentro do _rawSaveState) veria "vazio → estado novo" e
+        // sobrescreveria os clocks que vieram da nuvem com timestamp atual.
+        _lastSigSnapshot = _buildSigSnapshot();
+        _rawSaveState();              // persiste local SEM disparar push
+        renderCollectorChip(); render();
+        startPolling();
+        refreshStatus("synced");
+        // NÃO faz schedulePush: não queremos sobrescrever a nuvem com nada.
+      }
+      return data || { ok: false, message: "Resposta inesperada." };
+    } catch (e) {
+      console.warn("loginReplace erro", e);
+      return { ok: false, message: "Erro de conexão. Tente novamente." };
+    }
+  }
   async function checkId(id) {
     if (!ensureClient()) return null;
     try {
@@ -6211,7 +6279,7 @@ const syncLayer = (function () {
   }
 
   return {
-    boot, signup, login, logout, checkId, schedulePush,
+    boot, signup, login, loginReplace, logout, checkId, schedulePush,
     isEnabled, refreshStatus, getAccount: () => account,
   };
 })();
@@ -6226,6 +6294,10 @@ saveState = function () {
 // ============================================================
 // MODAL DE SYNC — wiring
 // ============================================================
+// Quando true, o "Entrar" do modal de login SUBSTITUI o estado local pela conta
+// (fluxo "trocar de conta"); quando false, é o login normal (mescla local+nuvem).
+let switchAccountMode = false;
+
 function openSyncModal(step = "choice") {
   document.getElementById("syncModal").style.display = "flex";
   showSyncStep(step);
@@ -6236,12 +6308,25 @@ function closeSyncModal() { document.getElementById("syncModal").style.display =
 // Pode reabrir a qualquer momento clicando no badge de status do header.
 function dismissSyncModal() {
   closeSyncModal();
+  switchAccountMode = false;   // desistiu: volta ao fluxo normal
   if (!syncLayer.isEnabled() && !state.collectorName) openNameModal(true);
 }
 function showSyncStep(step) {
   document.getElementById("syncStepChoice").style.display = step === "choice" ? "" : "none";
   document.getElementById("syncStepCreate").style.display = step === "create" ? "" : "none";
   document.getElementById("syncStepLogin").style.display  = step === "login"  ? "" : "none";
+  // No modo "trocar de conta", deixa claro que o aparelho vai carregar a outra conta.
+  if (step === "login") {
+    const sub = document.querySelector("#syncStepLogin .modal-subtitle");
+    const submit = document.getElementById("syncLoginSubmit");
+    if (switchAccountMode) {
+      if (sub) sub.innerHTML = "Digite o <strong>id</strong> e o <strong>PIN</strong> da conta que você quer carregar. As figurinhas <strong>desta conta</strong> vão substituir o que está neste aparelho.";
+      if (submit) submit.textContent = "Trocar e carregar";
+    } else {
+      if (sub) sub.innerHTML = "Digite o <strong>id</strong> e o <strong>PIN</strong> que você criou no outro aparelho. Suas marcações deste aparelho serão somadas às da nuvem (nada é perdido).";
+      if (submit) submit.textContent = "Entrar e sincronizar";
+    }
+  }
   const focusId = step === "create" ? "syncCreateName" : step === "login" ? "syncLoginId" : null;
   if (focusId) setTimeout(() => { const el = document.getElementById(focusId); if (el) el.focus(); }, 50);
 }
@@ -6257,12 +6342,12 @@ function showSyncStep(step) {
     e.target.value = e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, "").slice(0, 30);
   });
 });
-document.getElementById("syncGoCreate").addEventListener("click", () => showSyncStep("create"));
-document.getElementById("syncGoLogin").addEventListener("click", () => showSyncStep("login"));
+document.getElementById("syncGoCreate").addEventListener("click", () => { switchAccountMode = false; showSyncStep("create"); });
+document.getElementById("syncGoLogin").addEventListener("click", () => { switchAccountMode = false; showSyncStep("login"); });
 document.getElementById("syncGoLocal").addEventListener("click", dismissSyncModal);
 document.getElementById("syncCloseBtn").addEventListener("click", dismissSyncModal);
 document.getElementById("syncCreateBack").addEventListener("click", () => showSyncStep("choice"));
-document.getElementById("syncLoginBack").addEventListener("click", () => showSyncStep("choice"));
+document.getElementById("syncLoginBack").addEventListener("click", () => { switchAccountMode = false; showSyncStep("choice"); });
 // fechar clicando no fundo (fora do card) ou com Esc
 document.getElementById("syncModal").addEventListener("click", (e) => {
   if (e.target.id === "syncModal") dismissSyncModal();
@@ -6298,13 +6383,16 @@ document.getElementById("syncLoginSubmit").addEventListener("click", async () =>
   const err = document.getElementById("syncLoginError");
   err.textContent = "";
   if (id.length < 3 || !/^\d{4}$/.test(pin)) { err.textContent = "Informe o id e o PIN de 4 dígitos."; return; }
+  const isSwitch = switchAccountMode;
   const btn = document.getElementById("syncLoginSubmit");
-  btn.disabled = true; btn.textContent = "Entrando…";
-  const res = await syncLayer.login(id, pin);
-  btn.disabled = false; btn.textContent = "Entrar e sincronizar";
+  btn.disabled = true; btn.textContent = isSwitch ? "Carregando…" : "Entrando…";
+  // troca de conta = loginReplace (substitui o local); login normal = login (mescla)
+  const res = isSwitch ? await syncLayer.loginReplace(id, pin) : await syncLayer.login(id, pin);
+  btn.disabled = false; btn.textContent = isSwitch ? "Trocar e carregar" : "Entrar e sincronizar";
   if (res && res.ok) {
+    switchAccountMode = false;
     closeSyncModal();
-    showToast(`Bem-vindo de volta! Sincronizado como "${id}".`);
+    showToast(isSwitch ? `Conta trocada! Agora você é "${id}".` : `Bem-vindo de volta! Sincronizado como "${id}".`);
   } else {
     err.textContent = (res && res.message) || "id ou PIN incorretos.";
   }
@@ -6316,16 +6404,47 @@ document.getElementById("syncLoginSubmit").addEventListener("click", async () =>
 ["syncLoginId","syncLoginPin"].forEach(id =>
   document.getElementById(id).addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); document.getElementById("syncLoginSubmit").click(); } }));
 
-// Clique no badge: abre opções (criar/entrar) ou oferece desligar se já ativo
+// Clique no badge: se sincronizado, abre o modal de conta (gerenciar);
+// se não, abre o modal de sync pra criar/entrar.
 document.getElementById("syncBadge").addEventListener("click", () => {
-  if (syncLayer.isEnabled()) {
-    const acc = syncLayer.getAccount();
-    if (confirm(`Sincronizando como "${acc.id}".\n\nDeseja desligar a sincronização neste aparelho? (seus dados continuam salvos localmente)`)) {
-      syncLayer.logout();
-    }
-  } else {
-    openSyncModal("choice");
-  }
+  if (syncLayer.isEnabled()) openAccountModal();
+  else openSyncModal("choice");
+});
+
+// ===== Modal de CONTA (gerenciar conta logada) =====
+function openAccountModal() {
+  const acc = syncLayer.getAccount();
+  document.getElementById("accountIdLabel").textContent = acc ? acc.id : "—";
+  document.getElementById("accountModal").style.display = "flex";
+}
+function closeAccountModal() { document.getElementById("accountModal").style.display = "none"; }
+
+document.getElementById("accountCloseBtn").addEventListener("click", closeAccountModal);
+document.getElementById("accountModal").addEventListener("click", (e) => {
+  if (e.target.id === "accountModal") closeAccountModal();
+});
+
+// (1) Desconectar, mantendo a marcação atual só no local
+document.getElementById("accDisconnect").addEventListener("click", () => {
+  closeAccountModal();
+  syncLayer.logout();
+});
+
+// (2) Trocar de conta: desconecta, limpa tudo e abre o login em modo "substituir"
+document.getElementById("accSwitch").addEventListener("click", () => {
+  closeAccountModal();
+  syncLayer.logout();          // para de sincronizar a conta atual
+  clearAllLocalData();         // limpa este aparelho (o loginReplace também limpa, mas já some da tela)
+  renderCollectorChip(); render();
+  switchAccountMode = true;    // marca que o próximo "Entrar" deve SUBSTITUIR (sem merge)
+  openSyncModal("login");
+});
+
+// (3) Desconectar e começar do zero (apaga local; nuvem da conta permanece)
+document.getElementById("accReset").addEventListener("click", () => {
+  closeAccountModal();
+  syncLayer.logout();
+  performReset();              // limpa tudo + abre o modal de início
 });
 
 // ============================================================
